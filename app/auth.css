@@ -1,0 +1,381 @@
+/* Pantalla de acceso — se carga después de globals.css para refinar sus reglas .auth-* */
+
+.auth-layout { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); }
+
+/* ── Panel izquierdo ───────────────────────────── */
+/* --auth-pad-x ≈ 7.5% del panel (que mide 52.5vw); el escenario lo usa para sangrar hasta los bordes */
+.auth-brand { --auth-pad-x: clamp(32px, 3.9vw, 96px); background: #f3f6fa; padding: 40px var(--auth-pad-x); }
+.auth-story { width: min(520px, 100%); padding: 24px 0; }
+.auth-story .eyebrow { font-size: 12px; }
+.auth-story h1 { font-size: clamp(38px, 4vw, 54px); letter-spacing: -.035em; line-height: 1.06; text-wrap: balance; }
+.auth-story > p { font-size: 17px; line-height: 1.55; max-width: 38ch; color: #5f7186; }
+.auth-footer { font-size: 11px; color: #8693a1; }
+.auth-brand .brand small { font-size: 9px; }
+
+/* ── Escena de estacionamiento (panel izquierdo) ───────────────
+   Ocupa todo el espacio libre debajo del texto (flex: 1) y sangra hasta los bordes del panel.
+   Mundo fijo de 960×720 px escalado para caber completo en ese espacio.
+   Ciclo de autos: 26 s (auto A y auto B desfasados 13 s).
+   Barreras, cámara, cartel y terminal: 13 s (una vez por auto). */
+
+.auth-brand > .brand, .auth-story { position: relative; z-index: 2; }
+.auth-story { margin: clamp(20px, 5vh, 56px) 0 0; padding-bottom: 0; }
+.auth-footer {
+  position: absolute; z-index: 2; left: var(--auth-pad-x); bottom: 28px;
+  padding: 7px 10px; border-radius: 6px;
+  background: rgb(255 255 255 / .82); backdrop-filter: blur(6px);
+}
+/* En pantallas bajas la escena es pequeña: el pie (redundante con la marca) taparía la garita */
+@media (max-height: 820px) { .auth-footer { display: none; } }
+
+.auth-stage {
+  --park-ease-arrive: cubic-bezier(0.5, 1, 0.89, 1);
+  --park-ease-drive: cubic-bezier(0.65, 0, 0.35, 1);
+  --park-ease-depart: cubic-bezier(0.11, 0, 0.5, 0);
+  --park-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --park-ease-swing: cubic-bezier(0.77, 0, 0.175, 1);
+  --park-cycle: 26s;
+  --park-half: 13s;
+
+  position: relative; z-index: 0;
+  flex: 1 1 auto; min-height: 280px;
+  margin: clamp(16px, 3vh, 32px) calc(var(--auth-pad-x) * -1) -40px;
+  pointer-events: none;
+}
+/* Contenedor de consulta: absoluto para que 100cqh sea el alto real (en un ítem flex que crece, Chrome lo resuelve a 0) */
+.park-viewport {
+  position: absolute; inset: 0; overflow: hidden;
+  container-type: size; contain: strict;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+}
+.park-viewport::after {
+  content: ""; position: absolute; inset: 0; z-index: 5;
+  background: linear-gradient(180deg, #f3f6fa 0, rgb(243 246 250 / 0) 56px);
+}
+
+.park-world {
+  position: absolute; left: 50%; bottom: 0;
+  width: 960px; height: 720px;
+  transform-origin: 50% 100%;
+  translate: -50% 0;
+  scale: min(tan(atan2(100cqw, 960px)), tan(atan2(100cqh, 720px)));
+}
+.park-ground { position: absolute; left: -960px; top: -720px; overflow: visible; }
+
+/* ── Autos ─────────────────────────────────── */
+.car {
+  position: absolute; left: 0; top: 0; width: 76px; height: 40px;
+  border-radius: 12px; box-shadow: 0 5px 12px rgb(31 49 71 / .18);
+  --car: #ffffff;
+}
+.car svg { display: block; width: 76px; height: 40px; }
+.car-paint { fill: var(--car); stroke: rgb(31 49 71 / .12); stroke-width: 1; }
+.car-roof { fill: #fff; opacity: .2; }
+.car-glass { fill: #1f3147; opacity: .55; }
+.car-light { fill: #fff3c4; }
+.car-tail { fill: #ff7b6e; }
+
+.car-parked { rotate: var(--r); }
+
+.car-moving {
+  offset-anchor: 50% 50%; offset-rotate: auto;
+  animation-duration: var(--park-cycle); animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+.car-hero { --car: #3975dc; box-shadow: 0 8px 18px rgb(57 117 220 / .32); }
+.car-hero .car-paint { stroke: none; }
+
+.car-a-in {
+  offset-path: path("M -140 697 L 110 697 Q 190 697 190 617 L 190 592 L 190 430 Q 190 350 270 350 L 350 350 Q 410 350 410 290 L 410 245");
+  animation-name: park-a-in;
+}
+.car-a-out {
+  offset-path: path("M 350 350 L 690 350 Q 770 350 770 430 L 770 490 L 770 617 Q 770 697 850 697 L 1100 697");
+  animation-name: park-a-out;
+}
+.car-b-in {
+  offset-path: path("M -140 697 L 110 697 Q 190 697 190 617 L 190 592 L 190 430 Q 190 350 270 350 L 590 350 Q 650 350 650 410 L 650 455");
+  animation-name: park-b-in; animation-delay: calc(var(--park-half) * -1);
+}
+.car-b-out {
+  offset-path: path("M 590 350 L 690 350 Q 770 350 770 430 L 770 490 L 770 617 Q 770 697 850 697 L 1100 697");
+  animation-name: park-b-out; animation-delay: calc(var(--park-half) * -1);
+}
+.car-street {
+  --car: #aebdcd;
+  offset-path: path("M 1100 653 L -140 653");
+  animation: park-street 6.5s linear infinite;
+}
+
+/* Auto A: llega (0–2.8s), garita (2.8–5.4s), estaciona (5.4–9.2s),
+   permanece (9.2–16.6s), retrocede (16.6–18.4s) y se cambia por .car-a-out */
+@keyframes park-a-in {
+  0%      { offset-distance: 0px; opacity: 1; animation-timing-function: var(--park-ease-arrive); }
+  10.769% { offset-distance: 404.86px; animation-timing-function: linear; }
+  20.769% { offset-distance: 404.86px; animation-timing-function: var(--park-ease-drive); }
+  35.385% { offset-distance: 100%; animation-timing-function: linear; }
+  63.846% { offset-distance: 100%; animation-timing-function: var(--park-ease-drive); }
+  70.769% { offset-distance: 776.72px; opacity: 1; }
+  70.77%  { offset-distance: 776.72px; opacity: 0; }
+  100%    { offset-distance: 776.72px; opacity: 0; }
+}
+/* Auto A sale: (18.8–21.6s) a la garita de salida, paga (21.6–23.2s), se va (23.2–25.4s) */
+@keyframes park-a-out {
+  0%      { offset-distance: 0px; opacity: 0; }
+  70.769% { offset-distance: 0px; opacity: 0; }
+  70.77%  { offset-distance: 0px; opacity: 1; animation-timing-function: linear; }
+  72.308% { offset-distance: 0px; animation-timing-function: var(--park-ease-drive); }
+  83.077% { offset-distance: 529.86px; animation-timing-function: linear; }
+  89.231% { offset-distance: 529.86px; animation-timing-function: var(--park-ease-depart); }
+  97.692% { offset-distance: 100%; }
+  100%    { offset-distance: 100%; opacity: 1; }
+}
+@keyframes park-b-in {
+  0%      { offset-distance: 0px; opacity: 1; animation-timing-function: var(--park-ease-arrive); }
+  10.769% { offset-distance: 404.86px; animation-timing-function: linear; }
+  20.769% { offset-distance: 404.86px; animation-timing-function: var(--park-ease-drive); }
+  35.385% { offset-distance: 100%; animation-timing-function: linear; }
+  63.846% { offset-distance: 100%; animation-timing-function: var(--park-ease-drive); }
+  70.769% { offset-distance: 1016.72px; opacity: 1; }
+  70.77%  { offset-distance: 1016.72px; opacity: 0; }
+  100%    { offset-distance: 1016.72px; opacity: 0; }
+}
+@keyframes park-b-out {
+  0%      { offset-distance: 0px; opacity: 0; }
+  70.769% { offset-distance: 0px; opacity: 0; }
+  70.77%  { offset-distance: 0px; opacity: 1; animation-timing-function: linear; }
+  72.308% { offset-distance: 0px; animation-timing-function: var(--park-ease-drive); }
+  83.077% { offset-distance: 289.86px; animation-timing-function: linear; }
+  89.231% { offset-distance: 289.86px; animation-timing-function: var(--park-ease-depart); }
+  97.692% { offset-distance: 100%; }
+  100%    { offset-distance: 100%; opacity: 1; }
+}
+@keyframes park-street { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+
+/* ── Garitas ───────────────────────────────── */
+.park-arm {
+  position: absolute; top: 537px; width: 80px; height: 6px; border-radius: 3px;
+  background: repeating-linear-gradient(90deg, #e98078 0 10px, #ffffff 10px 20px);
+  box-shadow: 0 2px 4px rgb(31 49 71 / .2);
+  animation-duration: var(--park-half); animation-iteration-count: infinite;
+}
+.park-arm-in  { left: 154px; transform-origin: 100% 50%; animation-name: park-arm-in; }
+.park-arm-out { left: 726px; transform-origin: 0% 50%;   animation-name: park-arm-out; }
+@keyframes park-arm-in {
+  0%, 33.846% { rotate: 0deg; animation-timing-function: var(--park-ease-swing); }
+  39.231%, 54.615% { rotate: 90deg; animation-timing-function: var(--park-ease-swing); }
+  60.769%, 100% { rotate: 0deg; }
+}
+@keyframes park-arm-out {
+  0%, 72.308% { rotate: 0deg; animation-timing-function: var(--park-ease-swing); }
+  77.692%, 87.692% { rotate: 90deg; animation-timing-function: var(--park-ease-swing); }
+  93.846%, 100% { rotate: 0deg; }
+}
+
+/* Cámara LPR: cono + marco de lectura de placa (3.0–4.6s de cada medio ciclo) */
+.park-scan-cone {
+  opacity: 0;
+  animation: park-scan-cone var(--park-half) infinite;
+}
+@keyframes park-scan-cone {
+  0%, 23.077% { opacity: 0; }
+  24.615% { opacity: 1; }
+  26.923% { opacity: .45; }
+  28.462% { opacity: 1; }
+  30.769%, 100% { opacity: 0; }
+}
+.park-plate-frame {
+  position: absolute; left: 163px; top: 545px; width: 54px; height: 22px;
+  --frame: #eea83d;
+  opacity: 0;
+  animation: park-plate-frame var(--park-half) infinite;
+}
+.park-plate-frame i { position: absolute; width: 9px; height: 9px; border: 2px solid var(--frame); }
+.park-plate-frame i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 3px; }
+.park-plate-frame i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 3px; }
+.park-plate-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 3px; }
+.park-plate-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 3px; }
+@keyframes park-plate-frame {
+  0%, 23.077% { opacity: 0; scale: 1.25; --frame: #eea83d; animation-timing-function: var(--park-ease-out); }
+  25.385% { opacity: 1; scale: 1; --frame: #eea83d; }
+  29.231% { opacity: 1; scale: 1; --frame: #eea83d; }
+  29.240% { opacity: 1; scale: 1; --frame: #31bd81; }
+  35.385% { opacity: 1; scale: 1; --frame: #31bd81; }
+  38.462%, 100% { opacity: 0; scale: 1; --frame: #31bd81; }
+}
+
+/* Terminal de pago en la garita de salida */
+.park-terminal { animation: park-terminal var(--park-half) infinite; fill: #a2acb7; }
+@keyframes park-terminal {
+  0%, 69.231% { fill: #a2acb7; }
+  69.240%, 78.462% { fill: #31bd81; }
+  78.470%, 100% { fill: #a2acb7; }
+}
+
+/* Cartel de espacios libres: 13 → 12 al ingresar (6.8s) → 13 al salir (11.2s) */
+.park-sign {
+  position: absolute; left: 432px; top: 549px; width: 104px; height: 44px;
+  display: flex; align-items: center; gap: 9px; padding: 0 9px;
+  border-radius: 9px; background: #1f3147; box-shadow: 0 8px 18px rgb(31 49 71 / .22);
+}
+.park-sign-p {
+  width: 26px; height: 26px; border-radius: 6px; background: #3975dc; color: #fff;
+  display: grid; place-items: center; font: 800 15px/1 Arial, Helvetica, sans-serif;
+}
+.park-sign-text { display: grid; gap: 3px; }
+.park-sign-text small { font: 800 7px/1 Arial, Helvetica, sans-serif; letter-spacing: 1px; color: #8fa3b8; }
+.park-sign-digits { height: 18px; overflow: hidden; }
+.park-sign-digits > span {
+  display: grid; font: 700 18px/18px ui-monospace, "SF Mono", Menlo, monospace; color: #5ee0a5;
+  animation: park-sign var(--park-half) infinite;
+}
+@keyframes park-sign {
+  0%, 52.308% { translate: 0 0; animation-timing-function: var(--park-ease-out); }
+  53.846%, 86.154% { translate: 0 -18px; animation-timing-function: var(--park-ease-out); }
+  87.692%, 100% { translate: 0 0; }
+}
+
+/* Ruta guiada al espacio asignado y resaltado del espacio */
+.park-route { fill: none; stroke: #3975dc; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; opacity: 0;
+  animation: park-route var(--park-cycle) infinite; }
+@keyframes park-route {
+  0%, 16.923% { stroke-dashoffset: 1; opacity: 0; animation-timing-function: var(--park-ease-out); }
+  17.5% { opacity: .55; }
+  20.769% { stroke-dashoffset: 0; opacity: .55; }
+  33.077% { stroke-dashoffset: 0; opacity: .55; }
+  35.385%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+.park-slot { opacity: 0; animation: park-slot var(--park-cycle) infinite; }
+@keyframes park-slot {
+  0%, 16.923% { opacity: 0; }
+  18.462%, 34.615% { opacity: 1; }
+  36.154%, 100% { opacity: 0; }
+}
+
+/* ── Tarjetas flotantes ─────────────────────── */
+.park-chip, .park-badge {
+  position: absolute; opacity: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  animation-duration: var(--park-cycle); animation-iteration-count: infinite;
+}
+.park-chip {
+  width: 128px; padding: 8px 10px; border-radius: 10px;
+  background: #fff; border: 1px solid #e3eaf2;
+  box-shadow: 0 10px 24px rgb(31 49 71 / .14);
+  display: grid; gap: 5px;
+}
+.park-chip small { display: flex; align-items: center; gap: 6px; font-size: 8px; font-weight: 800; letter-spacing: .9px; color: #7a8a9c; }
+.park-chip small::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dot, #3975dc); }
+.park-chip strong { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #1f3147; letter-spacing: -.2px; }
+.park-chip em { font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .4px; padding: 3px 6px; border-radius: 5px; background: #eef4ff; color: #3975dc; }
+.park-chip-pay { --dot: #31bd81; }
+.park-chip-pay em { background: #eaf8f1; color: #23955f; }
+.park-chip-in  { left: 296px; top: 538px; transform-origin: 0% 100%; animation-name: park-chip-in; }
+.park-chip-pay { left: 544px; top: 538px; transform-origin: 100% 100%; animation-name: park-chip-pay; }
+@keyframes park-chip-in {
+  0%, 13.077% { opacity: 0; translate: 0 6px; scale: .96; animation-timing-function: var(--park-ease-out); }
+  14.423%, 29.615% { opacity: 1; translate: 0 0; scale: 1; animation-timing-function: ease; }
+  30.769%, 100% { opacity: 0; translate: 0 0; scale: 1; }
+}
+@keyframes park-chip-pay {
+  0%, 83.846% { opacity: 0; translate: 0 6px; scale: .96; animation-timing-function: var(--park-ease-out); }
+  85.192%, 94.231% { opacity: 1; translate: 0 0; scale: 1; animation-timing-function: ease; }
+  95.385%, 100% { opacity: 0; translate: 0 0; scale: 1; }
+}
+
+.park-badge {
+  top: 170px; height: 22px; padding: 0 9px 0 7px; border-radius: 11px;
+  display: flex; align-items: center; gap: 5px;
+  background: #fff; box-shadow: 0 6px 14px rgb(31 49 71 / .14);
+  font-size: 10px; font-weight: 800; color: #23955f; letter-spacing: .3px;
+  translate: -50% 0; transform-origin: 50% 100%;
+  animation-name: park-badge;
+}
+.park-badge-a { left: 410px; }
+.park-badge-b { left: 650px; top: 374px; }
+@keyframes park-badge {
+  0%, 35.769% { opacity: 0; scale: .9; animation-timing-function: var(--park-ease-out); }
+  36.923%, 47.692% { opacity: 1; scale: 1; animation-timing-function: ease; }
+  48.846%, 100% { opacity: 0; scale: 1; }
+}
+
+/* Auto B y sus elementos van 13 s detrás del auto A (declarado al final para no ser pisado por los shorthands) */
+.park-route-b, .park-slot-b, .park-chip-b, .park-badge-b { animation-delay: calc(var(--park-half) * -1); }
+
+/* Movimiento reducido: escena fija con la información visible */
+@media (prefers-reduced-motion: reduce) {
+  .auth-stage *, .auth-stage *::before, .auth-stage *::after { animation: none !important; }
+  .car-a-in, .car-b-in { offset-distance: 100%; }
+  .car-a-out, .car-b-out, .car-street { opacity: 0; }
+  .park-chip-in.park-chip-a { opacity: 1; }
+}
+
+/* ── Panel derecho ─────────────────────────────── */
+.auth-form-panel { background: #fff; padding: clamp(28px, 5vw, 64px); }
+.auth-form-wrap { width: min(420px, 100%); }
+.auth-mobile-brand { display: none; margin-bottom: 44px; }
+.auth-form-wrap > .eyebrow { font-size: 12px; color: #3f6db4; }
+.auth-form-wrap h2 { font-size: 34px; letter-spacing: -.03em; line-height: 1.1; margin: 12px 0 10px; color: #1f3147; }
+.form-intro { font-size: 15px; line-height: 1.6; color: #5f7186; margin: 0 0 32px; }
+.stack-form { gap: 20px; }
+
+.auth-form-wrap .field { gap: 8px; }
+.auth-form-wrap .field > span:first-child { font-size: 14px; font-weight: 600; color: #34455a; }
+.auth-form-wrap .field input {
+  height: 50px; font-size: 16px; padding: 0 14px; border-radius: 10px;
+  border: 1px solid #cfd9e4; color: #1f3147;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.auth-form-wrap .field input::placeholder { color: #8493a3; }
+.auth-form-wrap .field input:hover { border-color: #aebdcd; }
+.auth-form-wrap .field input:focus { border-color: #3975dc; box-shadow: 0 0 0 4px #3975dc24; }
+
+.password-wrap { position: relative; display: block; }
+.password-wrap input { padding-right: 52px; }
+.password-toggle {
+  position: absolute; top: 50%; right: 6px; translate: 0 -50%;
+  width: 40px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; color: #6b7c90; cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.password-toggle:hover { background: #eef2f7; color: #2b3e55; }
+.password-toggle:focus-visible { outline: 2px solid #3975dc; outline-offset: 1px; }
+
+.auth-form-wrap .full-button {
+  height: 52px; margin-top: 8px; padding: 0 18px; border-radius: 10px;
+  font-size: 16px; font-weight: 700; justify-content: center; gap: 10px; position: relative;
+  box-shadow: 0 6px 16px #3975dc33;
+  transition: background-color .15s ease, transform .1s ease, box-shadow .15s ease;
+}
+.auth-form-wrap .full-button span { margin-left: 0; font-size: 18px; transition: transform .15s ease; }
+.auth-form-wrap .full-button:hover:not(:disabled) span { transform: translateX(3px); }
+.auth-form-wrap .full-button:active:not(:disabled) { transform: scale(.985); }
+.auth-form-wrap .full-button:focus-visible { outline: 3px solid #3975dc55; outline-offset: 2px; }
+.auth-form-wrap .full-button:disabled { opacity: .75; cursor: progress; }
+
+.auth-form-wrap .notice { font-size: 14px; padding: 12px 14px; border-radius: 10px; margin-bottom: 22px; align-items: flex-start; }
+.auth-form-wrap .notice button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; flex: none; }
+.auth-form-wrap .cli-command { font-size: 13px; border-radius: 10px; }
+.secure-note { font-size: 13px; margin-top: 28px; color: #6b7c90; }
+
+.spin { animation: auth-spin .9s linear infinite; }
+@keyframes auth-spin { to { rotate: 360deg; } }
+
+@media (max-width: 860px) {
+  .auth-layout { grid-template-columns: minmax(0, 1fr); }
+  .auth-brand { display: none; }
+  .auth-form-panel { min-height: 100vh; }
+  .auth-mobile-brand { display: block; }
+  .auth-mobile-brand .brand > span:last-child { font-size: 20px; }
+  .auth-mobile-brand .brand small { font-size: 9px; }
+}
+@media (max-width: 480px) {
+  .auth-form-wrap h2 { font-size: 30px; }
+  .auth-form-panel { align-items: start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 2.4s; }
+  .auth-form-wrap .full-button, .auth-form-wrap .full-button span, .auth-form-wrap .field input { transition: none; }
+}
