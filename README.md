@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ParkFlow Frontend
 
-## Getting Started
+Interfaz web de ParkFlow: Next.js 16 (App Router), React 19, Tailwind CSS 4 y componentes shadcn/ui (Base UI). No habla directamente con la base de datos: las peticiones a `/api/*` se reenvían a la API Spring Boot mediante un route handler (`app/api/[...path]/route.ts`).
 
-First, run the development server:
+## Requisitos
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+| Herramienta | Versión |
+| --- | --- |
+| Node.js | 20.9 o posterior |
+| pnpm | 10 (`corepack enable` o `npm i -g pnpm@10`) |
+| ParkFlow API | en ejecución (ver [`apps/api/README.md`](../api/README.md)) |
+
+Usa **pnpm**; el repositorio incluye `pnpm-lock.yaml`.
+
+## Instalación
+
+### 1. Levantar la API
+
+El frontend necesita la API corriendo (por defecto en `http://localhost:8080`) con la base de datos migrada y una cuenta administradora creada. Sigue los pasos de [`apps/api/README.md`](../api/README.md).
+
+### 2. Instalar dependencias
+
+```sh
+cd apps/frontend
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Configurar variables de entorno
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+cp .env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Descripción | Por defecto |
+| --- | --- | --- |
+| `API_INTERNAL_URL` | Dirección interna desde la que Next.js llega a Spring Boot | `http://localhost:8080` |
 
-## Learn More
+Si cambiaste `PORT` en la API, actualiza este valor. Si cambiaste el puerto del frontend, actualiza `FRONTEND_ORIGIN` en el `.env` de la API.
 
-To learn more about Next.js, take a look at the following resources:
+### 4. Iniciar en desarrollo
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```sh
+pnpm dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Abre http://localhost:3000 e inicia sesión con la cuenta administradora creada con `--create-admin`.
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Comando | Acción |
+| --- | --- |
+| `pnpm dev` | Servidor de desarrollo en el puerto 3000 |
+| `pnpm lint` | ESLint |
+| `pnpm build` | Build de producción |
+| `pnpm start` | Sirve el build de producción (ejecuta `pnpm build` antes) |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Producción
+
+```sh
+pnpm build
+API_INTERNAL_URL=<endpoint-interno-de-la-api> pnpm start
+```
+
+Configura `API_INTERNAL_URL` con el endpoint interno apropiado, no con una URL pública innecesaria. La API debe usar `COOKIE_SECURE=true` bajo HTTPS y `FRONTEND_ORIGIN` con el dominio real del frontend. Hay un `.dockerignore` incluido para construir una imagen del frontend.
+
+## Problemas frecuentes
+
+- **Errores 502/500 al iniciar sesión o cargar datos**: la API no está corriendo o `API_INTERNAL_URL` apunta a otra dirección.
+- **Errores de CORS o sesión que no persiste**: `FRONTEND_ORIGIN` en la API no coincide con el origen desde el que abres el frontend.
+- **Puerto 3000 ocupado**: `pnpm dev -p 3001` (y actualiza `FRONTEND_ORIGIN` en la API).
+- **Dependencias inconsistentes**: borra `node_modules` y repite `pnpm install`.
