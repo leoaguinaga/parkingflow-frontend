@@ -298,5 +298,14 @@
 @media(prefers-reduced-motion:reduce){.vehicle-type-option{transition:none}}
 
 /* Browser and OS printer settings choose paper size and device. */
+.print-site{font-size:10px;font-weight:700;color:#5b6b7e;margin:-14px 0 14px}
+.print-provisional-badge{display:inline-block;margin:8px auto 4px;padding:4px 9px;border-radius:5px;background:#fff4dc;border:1px solid #f0d6a8;color:#8a5a0b;font-size:8px;font-weight:800;letter-spacing:.7px}
+.print-breakdown{display:grid;gap:6px;margin-top:14px;padding-top:12px;border-top:1px dashed #ccd5de;font-size:10px;color:#4e6074;text-align:left}
+.print-breakdown>div{display:flex;justify-content:space-between;gap:12px}
+.print-total{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;padding-top:12px;border-top:1px solid #ccd5de;color:#17283b}
+.print-total span{font-size:9px;font-weight:800;letter-spacing:.8px;color:#5b6b7e}
+.print-total strong{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
+.history-receipt-btn{margin-top:4px;width:max-content;padding:0}
+.exit-last-receipt{border-color:#cde8d6;background:#f8fdf9}
 @page{size:auto;margin:4mm}
 @media print{.print-ticket{box-sizing:border-box;width:fit-content;max-width:100%;padding:4mm;overflow-wrap:anywhere}.print-ticket dl{max-width:100%}}

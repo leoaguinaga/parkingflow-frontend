@@ -1,6 +1,6 @@
 # ParkFlow Frontend
 
-Interfaz web de ParkFlow: Next.js 16 (App Router), React 19, Tailwind CSS 4 y componentes shadcn/ui (Base UI). No habla directamente con la base de datos: las peticiones a `/api/*` se reenvían a la API Spring Boot mediante un route handler (`app/api/[...path]/route.ts`).
+Interfaz web de ParkFlow: Next.js 16 (App Router), React 19, Tailwind CSS 4 y componentes shadcn/ui (Base UI). No habla directamente con la base de datos: las peticiones a `/api/*` se reenvían a la API Spring Boot mediante el route handler (`app/api/[...path]/route.ts`), que preserva las cookies de sesión/CSRF (`Set-Cookie`) y devuelve HTTP `502` en JSON si la API no está disponible. Incluye vistas imprimibles neutrales en tamaño de papel para tickets de ingreso, tickets provisionales offline (`LOCAL-*`) y comprobantes de salida, además de cola offline en `IndexedDB` con instantánea local de catálogo/aforo en `localStorage` (`app/offline-queue.ts`).
 
 ## Requisitos
 
@@ -50,6 +50,7 @@ Abre http://localhost:3000 e inicia sesión con la cuenta administradora creada 
 | Comando | Acción |
 | --- | --- |
 | `pnpm dev` | Servidor de desarrollo en el puerto 3000 |
+| `pnpm exec tsc --noEmit` | Verificación estricta de tipos TypeScript |
 | `pnpm lint` | ESLint |
 | `pnpm build` | Build de producción |
 | `pnpm start` | Sirve el build de producción (ejecuta `pnpm build` antes) |

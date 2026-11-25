@@ -3,12 +3,30 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Activity, ArrowDownRight, ArrowUpRight, CarFront, Clock3, LogOut, Menu, Motorbike, Settings2, Users, Warehouse, Plus, Search, Printer, Ban, Pencil, X, History as HistoryIcon } from "lucide-react";
 import { AuthScreen } from "@/features/auth/components/AuthScreen";
-import { listOfflineEntries, removeOfflineEntry, saveOfflineEntry, type OfflineEntry } from "./offline-queue";
+import { listOfflineEntries, loadCatalogSnapshot, removeOfflineEntry, saveCatalogSnapshot, saveOfflineEntry, type OfflineEntry } from "./offline-queue";
 
 type User = { firstName: string; lastName: string; email: string; role: string; siteId: string; siteName: string };
 type VehicleType = { id: string; code: string; name: string; capacity: number | null; hourlyAmount: number | null; graceMinutes: number | null; billingIncrementMinutes: number | null; nightPeriodName: string | null; nightStartsAt: string | null; nightEndsAt: string | null; nightHourlyAmount: number | null };
 type Configuration = { site: { id: string; name: string; address: string; timeZone: string }; vehicleTypes: VehicleType[] };
 type Notice = { type: "success" | "error"; text: string } | null;
+type PrintTicketTarget =
+  | { kind: "server"; code: string }
+  | { kind: "provisional"; entry: OfflineEntry; typeName: string };
+type ReceiptData = {
+  code: string;
+  licensePlate: string;
+  vehicleType: string;
+  enteredAt: string;
+  exitedAt: string | null;
+  amount: number;
+  paymentMethod: string;
+  paymentReference: string | null;
+  processedBy: string | null;
+  elapsedMinutes?: number;
+  billedMinutes?: number;
+  billingIncrementMinutes?: number;
+  breakdown?: Record<string, number>;
+};
 
 const API = "/api";
 const vehicleIcons: Record<string, typeof CarFront> = { CAR: CarFront, MOTORCYCLE: Motorbike, VAN: Warehouse };
@@ -20,10 +38,12 @@ export default function Home() {
   const [mode, setMode] = useState<"loading" | "setup-required" | "login" | "dashboard">("loading");
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(true);
   const [section, setSectionState] = useState<"overview" | "settings" | "users" | "operations" | "exits" | "history">("overview");
   const setSection = (next: typeof section) => { setNotice(null); setSectionState(next); };
   const [operationsView, setOperationsView] = useState<"tickets" | "vehicles">("tickets");
-  const [printCode, setPrintCode] = useState<string | null>(null);
+  const [printTarget, setPrintTarget] = useState<PrintTicketTarget | null>(null);
+  const [printReceipt, setPrintReceipt] = useState<ReceiptData | null>(null);
 
   const csrfHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const cookieToken = document.cookie.split("; ").find((cookie) => cookie.startsWith("XSRF-TOKEN="))?.split("=").slice(1).join("=");
@@ -35,17 +55,17 @@ export default function Home() {
     return { "X-XSRF-TOKEN": decodeURIComponent(token) };
   }, []);
 
-  async function loadUsers() {
+  const loadUsers = useCallback(async () => {
     const response = await fetch(`${API}/admin/configuration/users`, { credentials: "include" });
     if (!response.ok) throw new Error("No se pudo cargar la lista de usuarios.");
     return response.json();
-  }
+  }, []);
 
-  async function loadConfiguration() {
+  const loadConfiguration = useCallback(async () => {
     const response = await fetch(`${API}/admin/configuration`, { credentials: "include" });
     if (!response.ok) throw new Error("No se pudo cargar la configuración.");
     setConfiguration(await response.json());
-  }
+  }, []);
 
   async function checkSession() {
     try {
@@ -56,10 +76,15 @@ export default function Home() {
         return;
       }
       const setup = await fetch(`${API}/auth/setup-status`);
-      setMode(setup.ok && (await setup.json()).complete ? "login" : "setup-required");
+      if (!setup.ok) {
+        setNotice({ type: "error", text: "No se pudo conectar con la API. Comprueba que Spring Boot esté activo en el puerto 8080." });
+        setMode("login");
+        return;
+      }
+      setMode((await setup.json()).complete ? "login" : "setup-required");
     } catch {
       setNotice({ type: "error", text: "No se pudo conectar con la API. Comprueba que Spring Boot esté activo en el puerto 8080." });
-      setMode("setup-required");
+      setMode("login");
     }
   }
 
@@ -68,10 +93,17 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, []);
   useEffect(() => {
-    if (mode !== "dashboard") return;
+    const update = () => setOnline(navigator.onLine);
+    const timer = window.setTimeout(update, 0);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.clearTimeout(timer); window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
+  useEffect(() => {
+    if (mode !== "dashboard" || user?.role !== "ADMIN") return;
     const timer = window.setTimeout(() => { void loadConfiguration().catch((error) => setNotice({ type: "error", text: error.message })); }, 0);
     return () => window.clearTimeout(timer);
-  }, [mode]);
+  }, [mode, user?.role, loadConfiguration]);
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setNotice(null);
@@ -137,28 +169,29 @@ export default function Home() {
         <button className={`nav-item ${section === "exits" ? "active" : ""}`} onClick={() => setSection("exits")}><ArrowUpRight size={18} /> Salidas</button>
         <button className={`nav-item ${section === "history" ? "active" : ""}`} onClick={() => setSection("history")}><HistoryIcon size={18} /> Historial</button>
         {isAdmin && <><div className="side-label side-label-gap">ADMINISTRACIÓN</div><button className={`nav-item ${section === "settings" ? "active" : ""}`} onClick={() => setSection("settings")}><Settings2 size={18} /> Configuración</button><button className={`nav-item ${section === "users" ? "active" : ""}`} onClick={() => setSection("users")}><Users size={18} /> Usuarios</button></>}
-        <div className="sidebar-bottom"><div className="connection-state"><span className="status-dot" /> SISTEMA CONECTADO</div><div className="profile"><div className="avatar">{user?.firstName.slice(0,1)}{user?.lastName.slice(0,1)}</div><div className="profile-info"><strong>{user?.firstName} {user?.lastName}</strong><span>{isAdmin ? "Administrador" : "Trabajador"}</span></div><button className="icon-button" onClick={logout} title="Cerrar sesión"><LogOut size={16} /></button></div></div>
+        <div className="sidebar-bottom"><div className="connection-state"><span className={`status-dot ${online ? "" : "status-amber"}`} /> {online ? "SISTEMA CONECTADO" : "SIN CONEXIÓN · MODO TEMPORAL"}</div><div className="profile"><div className="avatar">{user?.firstName.slice(0,1)}{user?.lastName.slice(0,1)}</div><div className="profile-info"><strong>{user?.firstName} {user?.lastName}</strong><span>{isAdmin ? "Administrador" : "Trabajador"}</span></div><button className="icon-button" onClick={logout} title="Cerrar sesión"><LogOut size={16} /></button></div></div>
       </aside>
       <section className="main-column">
         <header className="topbar"><div className="mobile-brand"><Menu size={19} /> ParkFlow</div><div className="breadcrumb">Panel <span>/</span> {section === "overview" ? "Resumen" : section === "settings" ? "Configuración" : section === "users" ? "Usuarios" : section === "exits" ? "Salidas" : section === "history" ? "Historial" : operationsView === "tickets" ? "Ingresos" : "Vehículos"}</div><div className="topbar-site"><span className="status-dot" /> {configuration?.site.name ?? user?.siteName ?? "Estacionamiento"}</div></header>
         <div className="content-area">
           {notice && <div className={`notice notice-${notice.type}`} role="status"><span>{notice.text}</span><button onClick={() => setNotice(null)}>×</button></div>}
-          {section === "operations" && <OperationsPanel csrfHeaders={csrfHeaders} view={operationsView} setView={setOperationsView} onNotice={setNotice} onPrint={setPrintCode} />}
-          {section === "exits" && <ExitPanel csrfHeaders={csrfHeaders} onNotice={setNotice} />}
-          {section === "history" && <HistoryPanel onNotice={setNotice} />}
+          {section === "operations" && <OperationsPanel csrfHeaders={csrfHeaders} view={operationsView} setView={setOperationsView} onNotice={setNotice} onPrint={setPrintTarget} />}
+          {section === "exits" && <ExitPanel csrfHeaders={csrfHeaders} operatorName={user ? `${user.firstName} ${user.lastName}` : null} onNotice={setNotice} onPrintReceipt={setPrintReceipt} />}
+          {section === "history" && <HistoryPanel onNotice={setNotice} onPrintReceipt={setPrintReceipt} />}
           {section === "overview" && <Overview user={user} configuration={configuration} onConfigure={() => setSection("settings")} onGo={(target) => { if (target === "entry") { setSection("operations"); setOperationsView("tickets"); } else setSection("exits"); }} />}
           {section === "settings" && isAdmin && configuration && <Settings key={JSON.stringify(configuration)} configuration={configuration} busy={busy} onSubmit={saveConfiguration} />}
           {section === "users" && isAdmin && <UsersPanel apiBase={API} csrfHeaders={csrfHeaders} onLoad={loadUsers} onNotice={setNotice} />}
         </div>
       </section>
     </main>
-    {printCode && <TicketPrint code={printCode} onClose={() => setPrintCode(null)} />}
+    {printTarget && <TicketPrint target={printTarget} onClose={() => setPrintTarget(null)} />}
+    {printReceipt && <ReceiptPrint receipt={printReceipt} siteName={configuration?.site.name ?? user?.siteName ?? "ParkFlow"} onClose={() => setPrintReceipt(null)} />}
     </>
   );
 }
 
 
-type HistoryRecord = { code: string; licensePlate: string; vehicleType: string; state: string; enteredAt: string; exitedAt: string | null; amount: number | null; paymentMethod: string | null; enteredBy: string; processedBy: string | null };
+type HistoryRecord = { code: string; licensePlate: string; vehicleType: string; state: string; enteredAt: string; exitedAt: string | null; amount: number | null; paymentMethod: string | null; paymentReference?: string | null; enteredBy: string; processedBy: string | null };
 type ReportSummary = { closedTickets: number; voidedTickets: number; openTickets: number; revenue: number; cash: number; yape: number; occupancy: Array<{ typeCode: string; typeName: string; capacity: number; occupied: number; available: number }> };
 
 const HISTORY_STATES = [["ALL", "Todos"], ["CLOSED", "Cerrados"], ["OPEN", "Abiertos"], ["VOIDED", "Anulados"]] as const;
@@ -166,7 +199,7 @@ const isoDay = (date: Date) => date.toLocaleDateString("en-CA");
 const shiftDays = (days: number) => { const date = new Date(); date.setDate(date.getDate() + days); return isoDay(date); };
 const shortDateTime = (value: string) => new Date(value).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
 
-function HistoryPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
+function HistoryPanel({ onNotice, onPrintReceipt }: { onNotice: (notice: Notice) => void; onPrintReceipt: (receipt: ReceiptData) => void }) {
   const today = isoDay(new Date());
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -215,7 +248,7 @@ function HistoryPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
     <div className="summary-grid history-summary" aria-busy={busy}><SummaryCard icon={Activity} label="INGRESOS NETOS" value={ready ? currency(summary.revenue) : "—"} unit={ready ? `Efectivo ${currency(summary.cash)} · Yape ${currency(summary.yape)}` : "Sin datos del periodo"} accent="blue" /><SummaryCard icon={CarFront} label="TICKETS CERRADOS" value={ready ? String(summary.closedTickets) : "—"} unit={ready ? `${summary.voidedTickets} anulados · ${summary.openTickets} abiertos` : "Sin datos del periodo"} accent="violet" /><SummaryCard icon={Warehouse} label="OCUPACIÓN ACTUAL" value={ready ? `${occupied}/${capacity}` : "—"} unit={ready ? "espacios en uso ahora" : "Sin datos"} accent="green" /></div>
     <div className="users-table-wrap operation-table"><div className="users-table-head"><div><div className="eyebrow">MOVIMIENTOS</div><h2>Operaciones del periodo</h2></div><span className="count-pill">{records.length} {records.length === 1 ? "registro" : "registros"}{records.length >= 500 ? " · mostrando los 500 más recientes" : ""}</span></div>
       <div className="users-table"><div className="users-row history-row history-header"><span>TICKET / FECHA</span><span>VEHÍCULO</span><span>ESTADO / IMPORTE</span><span>OPERADORES</span></div>
-        {records.map((record) => <div className="users-row history-row" key={record.code}><div className="ticket-code-cell"><strong>{record.code}</strong><small>{shortDateTime(record.enteredAt)}</small></div><div className="ticket-vehicle"><strong>{record.licensePlate}</strong><small>{record.vehicleType}</small></div><div className="history-state"><span className={`state-badge ${record.state.toLowerCase()}`}>{record.state === "CLOSED" ? "Cerrado" : record.state === "VOIDED" ? "Anulado" : "Abierto"}</span><small className="history-amount">{record.amount == null ? "Sin cobro" : currency(record.amount)}{record.paymentMethod ? ` · ${record.paymentMethod === "CASH" ? "Efectivo" : "Yape"}` : ""}</small></div><div className="ticket-code-cell"><strong>{record.processedBy ?? record.enteredBy}</strong><small>{record.exitedAt ? `Salida: ${shortDateTime(record.exitedAt)}` : `Ingreso: ${record.enteredBy}`}</small></div></div>)}
+        {records.map((record) => <div className="users-row history-row" key={record.code}><div className="ticket-code-cell"><strong>{record.code}</strong><small>{shortDateTime(record.enteredAt)}</small></div><div className="ticket-vehicle"><strong>{record.licensePlate}</strong><small>{record.vehicleType}</small></div><div className="history-state"><span className={`state-badge ${record.state.toLowerCase()}`}>{record.state === "CLOSED" ? "Cerrado" : record.state === "VOIDED" ? "Anulado" : "Abierto"}</span><small className="history-amount">{record.amount == null ? "Sin cobro" : currency(record.amount)}{record.paymentMethod ? ` · ${record.paymentMethod === "CASH" ? "Efectivo" : "Yape"}` : ""}{record.paymentReference ? ` · Ref. ${record.paymentReference}` : ""}</small></div><div className="ticket-code-cell"><strong>{record.processedBy ?? record.enteredBy}</strong><small>{record.exitedAt ? `Salida: ${shortDateTime(record.exitedAt)}` : `Ingreso: ${record.enteredBy}`}</small>{record.state === "CLOSED" && record.amount != null && record.paymentMethod != null && <button type="button" className="table-action history-receipt-btn" onClick={() => onPrintReceipt({ code: record.code, licensePlate: record.licensePlate, vehicleType: record.vehicleType, enteredAt: record.enteredAt, exitedAt: record.exitedAt, amount: record.amount!, paymentMethod: record.paymentMethod!, paymentReference: record.paymentReference ?? null, processedBy: record.processedBy })}><Printer size={14} /> Comprobante</button>}</div></div>)}
         {records.length === 0 && !failure && <div className="history-empty">{busy ? <p>Cargando movimientos…</p> : <><strong>{filtered ? "Ningún ticket coincide con estos filtros" : "Sin movimientos en este periodo"}</strong><p>{filtered ? "Prueba con otro estado o borra la búsqueda." : "Amplía el periodo para ver días anteriores."}</p><button className="secondary-button" onClick={() => { if (filtered) { setState("ALL"); setQuery(""); } else { setFrom(shiftDays(-6)); setTo(today); } }}>{filtered ? "Limpiar filtros" : "Ver últimos 7 días"}</button></>}</div>}
         {records.length === 0 && failure && <div className="history-empty"><p>No hay datos para mostrar.</p></div>}
       </div></div>
@@ -228,7 +261,7 @@ function Field({ label, name, type = "text", placeholder, required, minLength, a
 type VehicleRow = { id: string; licensePlate: string; typeCode: string; typeName: string; state: string; openTicketCode: string | null; enteredAt: string | null };
 type TicketRow = { id: string; code: string; licensePlate: string; typeCode: string; typeName: string; enteredAt: string; observation: string | null; state: string; enteredBy: string; capacity: number | null; occupied: number };
 
-function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { csrfHeaders: () => Promise<Record<string, string>>; view: "tickets" | "vehicles"; setView: (view: "tickets" | "vehicles") => void; onNotice: (notice: Notice) => void; onPrint: (code: string) => void }) {
+function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { csrfHeaders: () => Promise<Record<string, string>>; view: "tickets" | "vehicles"; setView: (view: "tickets" | "vehicles") => void; onNotice: (notice: Notice) => void; onPrint: (target: PrintTicketTarget) => void }) {
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [query, setQuery] = useState("");
@@ -243,10 +276,25 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
   const [offlineEntries, setOfflineEntries] = useState<OfflineEntry[]>([]);
   const [online, setOnline] = useState(true);
 
+  const refresh = useCallback(async () => {
+    const [vehicleResponse, ticketResponse, typeResponse, occupancyResponse] = await Promise.all([
+      fetch(`${API}/parking/vehicles?state=ALL&q=${encodeURIComponent(query)}`, { credentials: "include" }),
+      fetch(`${API}/parking/tickets?state=ALL&q=${encodeURIComponent(query)}`, { credentials: "include" }),
+      fetch(`${API}/parking/tickets/vehicle-types`, { credentials: "include" }),
+      fetch(`${API}/parking/tickets/occupancy`, { credentials: "include" }),
+    ]);
+    if (!vehicleResponse.ok || !ticketResponse.ok || !typeResponse.ok || !occupancyResponse.ok) throw new Error("No se pudieron cargar vehículos, tickets y aforo.");
+    const [vehicleRows, ticketRows, typeRows, occupancyRows] = await Promise.all([vehicleResponse.json(), ticketResponse.json(), typeResponse.json(), occupancyResponse.json()]) as [VehicleRow[], TicketRow[], Array<{ code: string; name: string }>, Array<{ typeCode: string; typeName: string; capacity: number; occupied: number }>];
+    setVehicles(vehicleRows); setTickets(ticketRows);
+    setTypes(typeRows); setCapacities(occupancyRows);
+    saveCatalogSnapshot({ types: typeRows, capacities: occupancyRows, savedAt: new Date().toISOString() });
+  }, [query]);
+
   const refreshOfflineEntries = useCallback(async () => setOfflineEntries(await listOfflineEntries()), []);
   const syncOfflineEntries = useCallback(async () => {
     if (!navigator.onLine) return;
     const entries = await listOfflineEntries();
+    let syncedCount = 0;
     for (const entry of entries) {
       if (entry.status === "CONFLICT") continue;
       try {
@@ -259,6 +307,7 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
         const body = await response.json().catch(() => ({}));
         if (response.ok) {
           await removeOfflineEntry(entry.operationId);
+          syncedCount += 1;
           onNotice({ type: "success", text: `Ingreso ${entry.code} sincronizado como ${body.code}.` });
         } else if (response.status >= 400 && response.status < 500) {
           await saveOfflineEntry({ ...entry, status: "CONFLICT", message: body.message ?? "El servidor rechazó este ingreso." });
@@ -272,11 +321,17 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
       }
     }
     await refreshOfflineEntries();
-  }, [csrfHeaders, onNotice, refreshOfflineEntries]);
+    if (syncedCount > 0) await refresh().catch(() => undefined);
+  }, [csrfHeaders, onNotice, refresh, refreshOfflineEntries]);
 
   useEffect(() => {
     const updateConnectivity = () => { setOnline(navigator.onLine); if (navigator.onLine) void syncOfflineEntries(); };
     const timer = window.setTimeout(() => {
+      const snapshot = loadCatalogSnapshot();
+      if (snapshot) {
+        setTypes((current) => current.length > 0 ? current : snapshot.types);
+        setCapacities((current) => current.length > 0 ? current : snapshot.capacities);
+      }
       setOnline(navigator.onLine);
       void refreshOfflineEntries().then(() => { if (navigator.onLine) void syncOfflineEntries(); });
     }, 0);
@@ -284,19 +339,6 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
     window.addEventListener("offline", updateConnectivity);
     return () => { window.clearTimeout(timer); window.removeEventListener("online", updateConnectivity); window.removeEventListener("offline", updateConnectivity); };
   }, [refreshOfflineEntries, syncOfflineEntries]);
-
-  const refresh = useCallback(async () => {
-    const [vehicleResponse, ticketResponse, typeResponse, occupancyResponse] = await Promise.all([
-      fetch(`${API}/parking/vehicles?state=ALL&q=${encodeURIComponent(query)}`, { credentials: "include" }),
-      fetch(`${API}/parking/tickets?state=ALL&q=${encodeURIComponent(query)}`, { credentials: "include" }),
-      fetch(`${API}/parking/tickets/vehicle-types`, { credentials: "include" }),
-      fetch(`${API}/parking/tickets/occupancy`, { credentials: "include" }),
-    ]);
-    if (!vehicleResponse.ok || !ticketResponse.ok || !typeResponse.ok || !occupancyResponse.ok) throw new Error("No se pudieron cargar vehículos, tickets y aforo.");
-    const [vehicleRows, ticketRows, typeRows, occupancyRows] = await Promise.all([vehicleResponse.json(), ticketResponse.json(), typeResponse.json(), occupancyResponse.json()]) as [VehicleRow[], TicketRow[], Array<{ code: string; name: string }>, Array<{ typeCode: string; typeName: string; capacity: number; occupied: number }>];
-    setVehicles(vehicleRows); setTickets(ticketRows);
-    setTypes(typeRows); setCapacities(occupancyRows);
-  }, [query]);
 
   useEffect(() => { const timer = window.setTimeout(() => { void refresh().catch((error) => { if (navigator.onLine) onNotice({ type: "error", text: error instanceof Error ? error.message : "Error al cargar operaciones." }); }); }, 0); return () => window.clearTimeout(timer); }, [refresh, view, onNotice]);
 
@@ -319,9 +361,13 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
         }
         throw networkError;
       }
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        await queueEntry(localEntry);
+        return;
+      }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message ?? "No se pudo registrar el ingreso.");
-      resetEntry(); onNotice({ type: "success", text: `Ingreso registrado. Código ${body.code}.` }); await refresh(); onPrint(body.code);
+      resetEntry(); onNotice({ type: "success", text: `Ingreso registrado. Código ${body.code}.` }); await refresh(); onPrint({ kind: "server", code: body.code });
     }
     catch (error) { onNotice({ type: "error", text: error instanceof Error ? error.message : "Error al registrar ingreso." }); }
     finally { setBusy(false); }
@@ -341,6 +387,7 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
     await refreshOfflineEntries();
     resetEntry();
     onNotice({ type: "success", text: `Ingreso guardado en este equipo como ${queued.code}. Es provisional hasta sincronizarse.` });
+    onPrint({ kind: "provisional", entry: queued, typeName: types.find((type) => type.code === queued.typeCode)?.name ?? queued.typeCode });
   }
 
   async function retryEntry(entry: OfflineEntry) {
@@ -384,7 +431,7 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
   const title = view === "tickets" ? "Tickets de ingreso" : "Vehículos";
   return <div className="operations-page">
     <div className="page-heading"><div><h1>{title}</h1><p>{view === "tickets" ? "Registra entradas y conserva cada ticket como historial operativo." : "Placas registradas y su estado. Un vehículo con ticket abierto no se puede editar ni desactivar."}</p></div>{view === "vehicles" && !vehicleOpen && <button className="primary-button" onClick={() => { setEditing(null); setVehicleOpen(true); }}><Plus size={17} />Crear vehículo</button>}</div>
-    {view === "tickets" && (!online || offlineEntries.length > 0) && <section className={`offline-panel ${online ? "offline-panel-online" : ""}`}><div className="offline-panel-heading"><div><strong>{online ? "Conexión disponible" : "Sin conexión · modo temporal"}</strong><span>{offlineEntries.filter((entry) => entry.status !== "CONFLICT").length} pendientes · {offlineEntries.filter((entry) => entry.status === "CONFLICT").length} conflictos</span></div><button className="table-action" disabled={!online} onClick={() => void syncOfflineEntries()}>Sincronizar ahora</button></div>{!online && <p>Se guardan ingresos en este equipo. El código LOCAL es provisional; el ticket oficial se asigna al sincronizar. No registres salidas ni cobros desconectado.</p>}{offlineEntries.map((entry) => <div className="offline-entry" key={entry.operationId}><div><strong>{entry.code} · {entry.licensePlate}</strong><small>{new Date(entry.createdAt).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" })} · {entry.status === "PENDING" ? "Pendiente de sincronización" : entry.message}</small></div>{entry.status !== "PENDING" && <div className="table-actions"><button className="table-action" disabled={!online} onClick={() => void retryEntry(entry)}>Reintentar</button><button className="table-action danger" onClick={() => void discardConflict(entry)}>Descartar</button></div>}</div>)}</section>}
+    {view === "tickets" && (!online || offlineEntries.length > 0) && <section className={`offline-panel ${online ? "offline-panel-online" : ""}`}><div className="offline-panel-heading"><div><strong>{online ? "Conexión disponible" : "Sin conexión · modo temporal"}</strong><span>{offlineEntries.filter((entry) => entry.status !== "CONFLICT").length} pendientes · {offlineEntries.filter((entry) => entry.status === "CONFLICT").length} conflictos</span></div><button className="table-action" disabled={!online} onClick={() => void syncOfflineEntries()}>Sincronizar ahora</button></div>{!online && <p>Se guardan ingresos en este equipo. El código LOCAL es provisional; el ticket oficial se asigna al sincronizar. No registres salidas ni cobros desconectado.</p>}{offlineEntries.map((entry) => <div className="offline-entry" key={entry.operationId}><div><strong>{entry.code} · {entry.licensePlate}</strong><small>{new Date(entry.createdAt).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" })} · {entry.status === "PENDING" ? "Pendiente de sincronización" : entry.message}</small></div><div className="table-actions"><button type="button" className="table-action" onClick={() => onPrint({ kind: "provisional", entry, typeName: types.find((type) => type.code === entry.typeCode)?.name ?? entry.typeCode })}><Printer size={14} /> Imprimir</button>{entry.status !== "PENDING" && <><button type="button" className="table-action" disabled={!online} onClick={() => void retryEntry(entry)}>Reintentar</button><button type="button" className="table-action danger" onClick={() => void discardConflict(entry)}>Descartar</button></>}</div></div>)}</section>}
     <div className="operation-toolbar"><div className="operation-tabs" role="tablist"><button role="tab" aria-selected={view === "tickets"} className={view === "tickets" ? "selected" : ""} onClick={() => setView("tickets")}>Tickets</button><button role="tab" aria-selected={view === "vehicles"} className={view === "vehicles" ? "selected" : ""} onClick={() => setView("vehicles")}>Vehículos</button></div><label className="operation-search"><Search size={17} /><input aria-label="Buscar" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={view === "tickets" ? "Buscar por placa o código" : "Buscar por placa"} /></label></div>
     {view === "vehicles" && !vehicleOpen && <div className="occupancy-strip">{capacities.map((item) => { const pending = offlineEntries.filter((entry) => entry.typeCode === item.typeCode && entry.status !== "CONFLICT").length; const occupied = item.occupied + pending; return <div className="occupancy-card" key={item.typeCode}><span>{item.typeName}</span><strong>{occupied} <small>/ {item.capacity}</small></strong><div className="occupancy-meter"><i style={{ width: `${item.capacity ? Math.min(100, occupied / item.capacity * 100) : 0}%` }} /></div><small>{Math.max(0, item.capacity - occupied)} espacios disponibles{pending > 0 ? ` · ${pending} local(es)` : ""}</small></div>; })}</div>}
     {view === "tickets" ? <>
@@ -394,7 +441,7 @@ function OperationsPanel({ csrfHeaders, view, setView, onNotice, onPrint }: { cs
         <label className="entry-note"><span>Observación <em>(opcional)</em></span><input name="observation" maxLength={500} placeholder="Ej. golpe en el parachoques" /></label>
         <button className="primary-button entry-submit" disabled={busy}>{busy ? "Registrando…" : <>Registrar ingreso<kbd>↵</kbd></>}</button>
       </form>}
-      <div className="users-table-wrap operation-table"><div className="users-table-head"><div><div className="eyebrow">REGISTRO DE INGRESOS</div><h2>Tickets</h2></div><span className="count-pill">{tickets.length} registros</span></div><div className="users-table"><div className="users-row ticket-row ticket-header"><span>TICKET / HORA</span><span>VEHÍCULO</span><span>ESTADO</span><span>ACCIONES</span></div>{tickets.map((ticket) => <div className="users-row ticket-row" key={ticket.id}><div className="ticket-code-cell"><strong>{ticket.code}</strong><small>{new Date(ticket.enteredAt).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" })}</small></div><div className="ticket-vehicle"><strong>{ticket.licensePlate}</strong><small>{ticket.typeName} · {ticket.enteredBy}</small></div><span><i className={`status-dot ${ticket.state === "OPEN" ? "" : "status-muted"}`} /> {ticket.state === "OPEN" ? "Abierto" : ticket.state === "CLOSED" ? "Cerrado" : "Anulado"}</span><div className="table-actions"><button className="table-action" onClick={() => onPrint(ticket.code)}><Printer size={14} /> Imprimir</button>{ticket.state === "OPEN" && <button className="table-action danger" onClick={() => voidTicket(ticket.code)}><Ban size={14} /> Anular</button>}</div></div>)}{tickets.length === 0 && <div className="users-empty">Aún no hay tickets. Escribe una placa y elige el tipo de vehículo arriba para registrar el primer ingreso.</div>}</div></div>
+      <div className="users-table-wrap operation-table"><div className="users-table-head"><div><div className="eyebrow">REGISTRO DE INGRESOS</div><h2>Tickets</h2></div><span className="count-pill">{tickets.length} registros</span></div><div className="users-table"><div className="users-row ticket-row ticket-header"><span>TICKET / HORA</span><span>VEHÍCULO</span><span>ESTADO</span><span>ACCIONES</span></div>{tickets.map((ticket) => <div className="users-row ticket-row" key={ticket.id}><div className="ticket-code-cell"><strong>{ticket.code}</strong><small>{new Date(ticket.enteredAt).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" })}</small></div><div className="ticket-vehicle"><strong>{ticket.licensePlate}</strong><small>{ticket.typeName} · {ticket.enteredBy}</small></div><span><i className={`status-dot ${ticket.state === "OPEN" ? "" : "status-muted"}`} /> {ticket.state === "OPEN" ? "Abierto" : ticket.state === "CLOSED" ? "Cerrado" : "Anulado"}</span><div className="table-actions"><button className="table-action" onClick={() => onPrint({ kind: "server", code: ticket.code })}><Printer size={14} /> Imprimir</button>{ticket.state === "OPEN" && <button className="table-action danger" onClick={() => voidTicket(ticket.code)}><Ban size={14} /> Anular</button>}</div></div>)}{tickets.length === 0 && <div className="users-empty">Aún no hay tickets. Escribe una placa y elige el tipo de vehículo arriba para registrar el primer ingreso.</div>}</div></div>
     </> : <>
       {vehicleOpen && <VehicleForm key={editing?.id ?? "new"} editing={editing} types={types} vehicles={vehicles} busy={busy} onSave={saveVehicle} onCancel={() => { setVehicleOpen(false); setEditing(null); onNotice(null); }} onShowExisting={(plate) => { setQuery(plate); setVehicleFilter("ALL"); setVehicleOpen(false); setEditing(null); }} />}
       <VehicleCatalog formOpen={vehicleOpen} vehicles={vehicles} query={query} filter={vehicleFilter} setFilter={setVehicleFilter} onCreate={() => { setEditing(null); setVehicleOpen(true); }} onClearSearch={() => setQuery("")} onEdit={(vehicle) => { setEditing(vehicle); setVehicleOpen(true); }} onToggle={(vehicle) => void setVehicleState(vehicle)} />
@@ -496,9 +543,10 @@ function formatElapsed(from: string, now: number) {
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
 }
 
-function ExitPanel({ csrfHeaders, onNotice }: { csrfHeaders: () => Promise<Record<string, string>>; onNotice: (notice: Notice) => void }) {
+function ExitPanel({ csrfHeaders, operatorName, onNotice, onPrintReceipt }: { csrfHeaders: () => Promise<Record<string, string>>; operatorName: string | null; onNotice: (notice: Notice) => void; onPrintReceipt: (receipt: ReceiptData) => void }) {
   const [code, setCode] = useState("");
   const [quote, setQuote] = useState<ExitQuote | null>(null);
+  const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [method, setMethod] = useState("CASH");
   const [reference, setReference] = useState("");
   const [busy, setBusy] = useState(false);
@@ -525,7 +573,8 @@ function ExitPanel({ csrfHeaders, onNotice }: { csrfHeaders: () => Promise<Recor
   const matches = (open ?? []).filter((ticket) => !term || ticket.licensePlate.toUpperCase().replace(/[\s-]/g, "").includes(term) || ticket.code.toUpperCase().replace(/[\s-]/g, "").includes(term));
 
   async function calculate(identifier: string) {
-    setBusy(true); setQuote(null); onNotice(null);
+    if (!identifier.trim()) return;
+    setBusy(true); setQuote(null); setLastReceipt(null); onNotice(null);
     try { const response = await fetch(`${API}/parking/tickets/${encodeURIComponent(identifier.trim())}/quote`, { credentials: "include", cache: "no-store" }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.message ?? "No se pudo calcular la salida."); setQuote(body); setMethod("CASH"); setReference(""); }
     catch (error) { onNotice({ type: "error", text: error instanceof Error ? error.message : "No se pudo calcular la salida." }); }
     finally { setBusy(false); }
@@ -537,7 +586,30 @@ function ExitPanel({ csrfHeaders, onNotice }: { csrfHeaders: () => Promise<Recor
   function reset() { setQuote(null); setCode(""); setReference(""); onNotice(null); }
   async function close() {
     if (!quote) return; setBusy(true); onNotice(null);
-    try { const response = await fetch(`${API}/parking/tickets/${encodeURIComponent(quote.ticketCode)}/close`, { method: "PUT", headers: { "Content-Type": "application/json", ...await csrfHeaders() }, credentials: "include", body: JSON.stringify({ method, reference: reference || null, confirmedAmount: quote.amount }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.message ?? "No se pudo confirmar el cobro."); onNotice({ type: "success", text: `Salida registrada · ${quote.licensePlate}. Cobro ${currency(body.amount)} por ${method === "CASH" ? "efectivo" : "Yape"}.` }); reset(); void loadOpen(); }
+    try {
+      const response = await fetch(`${API}/parking/tickets/${encodeURIComponent(quote.ticketCode)}/close`, { method: "PUT", headers: { "Content-Type": "application/json", ...await csrfHeaders() }, credentials: "include", body: JSON.stringify({ method, reference: reference || null, confirmedAmount: quote.amount }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message ?? "No se pudo confirmar el cobro.");
+      const receipt: ReceiptData = {
+        code: body.ticketCode ?? quote.ticketCode,
+        licensePlate: body.licensePlate ?? quote.licensePlate,
+        vehicleType: body.vehicleType ?? quote.vehicleType,
+        enteredAt: body.enteredAt ?? quote.enteredAt,
+        exitedAt: body.exitedAt ?? quote.exitedAt,
+        amount: Number(body.amount ?? quote.amount),
+        paymentMethod: method,
+        paymentReference: reference.trim() || null,
+        processedBy: operatorName,
+        elapsedMinutes: body.elapsedMinutes ?? quote.elapsedMinutes,
+        billedMinutes: body.billedMinutes ?? quote.billedMinutes,
+        billingIncrementMinutes: body.billingIncrementMinutes ?? quote.billingIncrementMinutes,
+        breakdown: body.breakdown ?? quote.breakdown,
+      };
+      reset();
+      setLastReceipt(receipt);
+      onNotice({ type: "success", text: `Salida registrada · ${receipt.licensePlate}. Cobro ${currency(receipt.amount)} por ${method === "CASH" ? "efectivo" : "Yape"}.` });
+      void loadOpen();
+    }
     catch (error) { onNotice({ type: "error", text: error instanceof Error ? error.message : "No se pudo confirmar el cobro." }); }
     finally { setBusy(false); }
   }
@@ -561,7 +633,11 @@ function ExitPanel({ csrfHeaders, onNotice }: { csrfHeaders: () => Promise<Recor
         </div>
       </section>
       <aside className="exit-checkout" aria-live="polite">
-        {!quote ? <div className="exit-placeholder"><ArrowUpRight size={22} /><strong>Selecciona un vehículo</strong><p>Aquí verás el tiempo, el desglose y el total a cobrar.</p></div> : <section className="exit-quote">
+        {!quote ? (lastReceipt ? <section className="exit-quote exit-last-receipt">
+          <div className="exit-quote-head"><div><div className="eyebrow">SALIDA CONFIRMADA · {lastReceipt.code}</div><h2>{lastReceipt.licensePlate}</h2><p>{lastReceipt.vehicleType} · {lastReceipt.paymentMethod === "CASH" ? "Efectivo" : "Yape"}{lastReceipt.paymentReference ? ` (${lastReceipt.paymentReference})` : ""}</p></div><button type="button" className="table-action" onClick={() => setLastReceipt(null)}>Limpiar</button></div>
+          <div className="quote-total-big"><span>Total pagado</span><strong>{currency(lastReceipt.amount)}</strong></div>
+          <button type="button" className="primary-button exit-confirm" onClick={() => onPrintReceipt(lastReceipt)}><Printer size={16} /> Imprimir comprobante</button>
+        </section> : <div className="exit-placeholder"><ArrowUpRight size={22} /><strong>Selecciona un vehículo</strong><p>Aquí verás el tiempo, el desglose y el total a cobrar.</p></div>) : <section className="exit-quote">
           <div className="exit-quote-head"><div><div className="eyebrow">TICKET {quote.ticketCode}</div><h2>{quote.licensePlate}</h2><p>{quote.vehicleType} · Ingreso {new Date(quote.enteredAt).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" })}</p></div><button type="button" className="table-action" onClick={reset}>Cambiar</button></div>
           <div className="quote-time"><Clock3 size={15} /><span><strong>{formatElapsed(quote.enteredAt, new Date(quote.exitedAt).getTime())}</strong> transcurridos · cobro por tramos de {quote.billingIncrementMinutes} min</span></div>
           <div className="quote-breakdown">{Object.entries(quote.breakdown).map(([label, amount]) => <div key={label}><span>{label}</span><strong>{currency(amount)}</strong></div>)}</div>
@@ -575,10 +651,50 @@ function ExitPanel({ csrfHeaders, onNotice }: { csrfHeaders: () => Promise<Recor
   </>;
 }
 
-function TicketPrint({ code, onClose }: { code: string; onClose: () => void }) {
-  const [ticket, setTicket] = useState<Record<string, string> | null>(null);
-  useEffect(() => { let cancelled = false; void fetch(`${API}/parking/tickets/${encodeURIComponent(code)}`, { credentials: "include" }).then((response) => response.json()).then((data) => { if (!cancelled) setTicket(data); }).catch(() => undefined); return () => { cancelled = true; }; }, [code]);
-  return <div className="print-overlay"><div className="print-actions"><button className="secondary-button" onClick={onClose}><X size={16} /> Cerrar</button><button className="primary-button" onClick={() => window.print()}><Printer size={16} /> Imprimir ticket</button></div><article className="print-ticket"><div className="print-brand">PARKFLOW<span>.</span></div><div className="eyebrow">TICKET DE INGRESO</div><div className="print-code">{ticket?.code ?? code}</div><div className="print-identifier-label">IDENTIFICADOR DE BÚSQUEDA</div><dl><dt>PLACA</dt><dd>{ticket?.licensePlate ?? "Cargando…"}</dd><dt>VEHÍCULO</dt><dd>{ticket?.typeName ?? ""}</dd><dt>FECHA Y HORA</dt><dd>{ticket?.enteredAt ? new Date(ticket.enteredAt).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" }) : ""}</dd></dl><p>Conserve este ticket para registrar la salida.</p></article></div>;
+function TicketPrint({ target, onClose }: { target: PrintTicketTarget; onClose: () => void }) {
+  const [serverTicket, setServerTicket] = useState<Record<string, string> | null>(null);
+  const serverCode = target.kind === "server" ? target.code : null;
+  useEffect(() => {
+    if (!serverCode) return;
+    let cancelled = false;
+    void fetch(`${API}/parking/tickets/${encodeURIComponent(serverCode)}`, { credentials: "include" })
+      .then((response) => response.json())
+      .then((data) => { if (!cancelled) setServerTicket(data); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [serverCode]);
+
+  const provisional = target.kind === "provisional";
+  const code = provisional ? target.entry.code : (serverTicket?.code ?? target.code);
+  const licensePlate = provisional ? target.entry.licensePlate : (serverTicket?.licensePlate ?? "Cargando…");
+  const typeName = provisional ? target.typeName : (serverTicket?.typeName ?? "");
+  const enteredAt = provisional ? target.entry.createdAt : serverTicket?.enteredAt;
+
+  return <div className="print-overlay"><div className="print-actions"><button className="secondary-button" onClick={onClose}><X size={16} /> Cerrar</button><button className="primary-button" onClick={() => window.print()}><Printer size={16} /> Imprimir ticket</button></div><article className="print-ticket"><div className="print-brand">PARKFLOW<span>.</span></div><div className="eyebrow">{provisional ? "TICKET PROVISIONAL" : "TICKET DE INGRESO"}</div>{provisional && <div className="print-provisional-badge">PENDIENTE DE SINCRONIZACIÓN</div>}<div className="print-code">{code}</div><div className="print-identifier-label">IDENTIFICADOR DE BÚSQUEDA</div><dl><dt>PLACA</dt><dd>{licensePlate}</dd><dt>VEHÍCULO</dt><dd>{typeName}</dd><dt>FECHA Y HORA</dt><dd>{enteredAt ? new Date(enteredAt).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" }) : ""}</dd></dl><p>{provisional ? "Ticket provisional sin conexión. El código oficial se asignará al sincronizar." : "Conserve este ticket para registrar la salida."}</p></article></div>;
+}
+
+function ReceiptPrint({ receipt, siteName, onClose }: { receipt: ReceiptData; siteName: string; onClose: () => void }) {
+  const breakdownEntries = receipt.breakdown ? Object.entries(receipt.breakdown) : [];
+  return <div className="print-overlay">
+    <div className="print-actions"><button className="secondary-button" onClick={onClose}><X size={16} /> Cerrar</button><button className="primary-button" onClick={() => window.print()}><Printer size={16} /> Imprimir comprobante</button></div>
+    <article className="print-ticket">
+      <div className="print-brand">PARKFLOW<span>.</span></div>
+      <div className="print-site">{siteName}</div>
+      <div className="eyebrow">COMPROBANTE DE SALIDA</div>
+      <div className="print-code">{receipt.code}</div>
+      <dl>
+        <dt>PLACA</dt><dd>{receipt.licensePlate}</dd>
+        <dt>VEHÍCULO</dt><dd>{receipt.vehicleType}</dd>
+        <dt>INGRESO</dt><dd>{new Date(receipt.enteredAt).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" })}</dd>
+        <dt>SALIDA</dt><dd>{receipt.exitedAt ? new Date(receipt.exitedAt).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" }) : "—"}</dd>
+        <dt>MEDIO DE PAGO</dt><dd>{receipt.paymentMethod === "CASH" ? "Efectivo" : "Yape"}{receipt.paymentReference ? ` · Ref. ${receipt.paymentReference}` : ""}</dd>
+        {receipt.processedBy && <><dt>OPERADOR</dt><dd>{receipt.processedBy}</dd></>}
+      </dl>
+      {breakdownEntries.length > 0 && <div className="print-breakdown">{breakdownEntries.map(([label, amount]) => <div key={label}><span>{label}</span><strong>{currency(amount)}</strong></div>)}</div>}
+      <div className="print-total"><span>TOTAL PAGADO</span><strong>{currency(receipt.amount)}</strong></div>
+      <p>Gracias por usar ParkFlow.</p>
+    </article>
+  </div>;
 }
 
 type OccupancyRow = { typeCode: string; typeName: string; capacity: number; occupied: number; available?: number };
@@ -620,9 +736,9 @@ function Overview({ user, configuration, onConfigure, onGo }: { user: User | nul
     <div className="section-title-row live-title"><div><div className="eyebrow">AFORO EN VIVO</div><h2>Ocupación por tipo de vehículo</h2></div><span className="readiness">{updatedAt ? `Actualizado ${new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit" }).format(updatedAt)}` : ""}</span></div>
     <div className="live-grid">
       <article className={`live-total ${level({ capacity: totalCapacity, occupied: totalOccupied })}`}><div className="eyebrow">TOTAL OCUPADO</div><div className="live-total-value">{occupancy ? totalOccupied : "—"}<small> / {occupancy ? totalCapacity : "—"}</small></div><div className="occupancy-meter" role="progressbar" aria-label="Ocupación total" aria-valuemin={0} aria-valuemax={totalCapacity} aria-valuenow={totalOccupied}><i style={{ width: `${totalCapacity ? Math.min(100, totalOccupied / totalCapacity * 100) : 0}%` }} /></div><p>{totalCapacity ? `${Math.round(totalOccupied / totalCapacity * 100)}% de la capacidad en uso` : "Define la capacidad para ver el aforo."}</p></article>
-      {rows.map((item) => { const Icon = vehicleIcons[item.typeCode] ?? CarFront; const state = level(item); const free = Math.max(0, item.capacity - item.occupied); const rate = vehicleTypes.find((type) => type.code === item.typeCode)?.hourlyAmount ?? null; return <article className={`live-card ${state}`} key={item.typeCode}><div className="live-card-head"><div className={`vehicle-icon ${item.typeCode.toLowerCase()}`}><Icon size={19} /></div><strong>{item.typeName}</strong><span className={`live-badge ${state}`}>{state === "full" ? "Lleno" : state === "high" ? "Casi lleno" : "Disponible"}</span></div><div className="live-free"><span>{free}</span> libres</div><div className="occupancy-meter" role="progressbar" aria-label={`Ocupación de ${item.typeName}`} aria-valuemin={0} aria-valuemax={item.capacity} aria-valuenow={item.occupied}><i style={{ width: `${item.capacity ? Math.min(100, item.occupied / item.capacity * 100) : 0}%` }} /></div><div className="live-foot"><span>{item.occupied} de {item.capacity} ocupados</span><span>{currency(rate)} / hora</span></div></article>; })}
+      {rows.map((item) => { const Icon = vehicleIcons[item.typeCode] ?? CarFront; const state = level(item); const free = Math.max(0, item.capacity - item.occupied); const rate = vehicleTypes.find((type) => type.code === item.typeCode)?.hourlyAmount ?? null; return <article className={`live-card ${state}`} key={item.typeCode}><div className="live-card-head"><div className={`vehicle-icon ${item.typeCode.toLowerCase()}`}><Icon size={19} /></div><strong>{item.typeName}</strong><span className={`live-badge ${state}`}>{state === "full" ? "Lleno" : state === "high" ? "Casi lleno" : "Disponible"}</span></div><div className="live-free"><span>{free}</span> libres</div><div className="occupancy-meter" role="progressbar" aria-label={`Ocupación de ${item.typeName}`} aria-valuemin={0} aria-valuemax={item.capacity} aria-valuenow={item.occupied}><i style={{ width: `${item.capacity ? Math.min(100, item.occupied / item.capacity * 100) : 0}%` }} /></div><div className="live-foot"><span>{item.occupied} de {item.capacity} ocupados</span>{configuration && <span>{currency(rate)} / hora</span>}</div></article>; })}
     </div>
-    <div className="config-strip"><span className={`status-dot ${allConfigured ? "" : "status-amber"}`} /><p>{allConfigured ? `${configured} tipos de vehículo configurados con capacidad y tarifa.` : "Faltan tipos de vehículo por configurar (capacidad o tarifa)."}</p>{user?.role === "ADMIN" && <button className="secondary-button" onClick={onConfigure}><Settings2 size={16} /> Configurar</button>}</div>
+    {user?.role === "ADMIN" && <div className="config-strip"><span className={`status-dot ${allConfigured ? "" : "status-amber"}`} /><p>{allConfigured ? `${configured} tipos de vehículo configurados con capacidad y tarifa.` : "Faltan tipos de vehículo por configurar (capacidad o tarifa)."}</p><button className="secondary-button" onClick={onConfigure}><Settings2 size={16} /> Configurar</button></div>}
   </>;
 }
 
