@@ -7,17 +7,31 @@ async function proxy(request: NextRequest) {
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("connection");
-  const response = await fetch(upstreamUrl, {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
-    cache: "no-store",
-    redirect: "manual",
+
+  let response: Response;
+  try {
+    response = await fetch(upstreamUrl, {
+      method: request.method,
+      headers,
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+      cache: "no-store",
+      redirect: "manual",
+    });
+  } catch {
+    return NextResponse.json({ message: "No se pudo conectar con la API de ParkFlow." }, { status: 502 });
+  }
+
+  const responseHeaders = new Headers();
+  response.headers.forEach((value, key) => {
+    const normalized = key.toLowerCase();
+    if (normalized === "transfer-encoding" || normalized === "connection" || normalized === "content-encoding" || normalized === "set-cookie") {
+      return;
+    }
+    responseHeaders.append(key, value);
   });
-  const responseHeaders = new Headers(response.headers);
-  responseHeaders.delete("transfer-encoding");
-  responseHeaders.delete("connection");
-  responseHeaders.delete("content-encoding");
+  for (const cookie of response.headers.getSetCookie()) {
+    responseHeaders.append("set-cookie", cookie);
+  }
   return new NextResponse(response.body, { status: response.status, headers: responseHeaders });
 }
 
